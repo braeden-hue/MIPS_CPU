@@ -1,100 +1,55 @@
 Read this in: **English** | [한국어](README.ko.md)
 
-# MIPS 5-Stage Pipelined CPU
+# MIPS Pipeline and Out-of-Order Microarchitecture
 
-This project implements a single-issue, in-order MIPS CPU in Verilog. It began as a conventional five-stage pipeline and was extended with data forwarding, focused hazard detection, early branch resolution, and dynamic branch prediction.
+This Verilog project extends a five-stage in-order MIPS CPU into a small, cycle-accurate microarchitecture platform. It now includes two cores that execute the same ISA subset and share the same latency-aware memory system:
 
-The pipeline follows `IF -> ID -> EX -> MEM -> WB`. The current memory model is intentionally simple: instructions and data share a flat 32 KiB array with combinational reads. Cache behavior and variable memory latency are not part of this version.
+- `CPU.v`: five-stage in-order pipeline (`IF–ID–EX–MEM–WB`)
+- `core_ooo.v`: ROB-based, non-speculative, single-issue out-of-order core
 
-## Design highlights
+![Current in-order CPU architecture](docs/cpu_architecture_en.png)
 
-The forwarding unit selects results from the EX/MEM and MEM/WB stages before they reach the ALU. The register file also handles a write and a read of the same register in one cycle. With those paths in place, the hazard unit only stalls for load-use dependencies and for branch operands that are not yet available.
+## Implemented
 
-Branches are resolved in the ID stage. A 64-entry direct-mapped branch target buffer supplies candidate targets, while a 256-entry table of 2-bit saturating counters predicts conditional-branch direction. A mismatch between the prediction and the ID-stage result redirects the PC and flushes the younger instruction.
+The in-order core includes EX/MEM and MEM/WB forwarding, register-file forwarding, load-use and branch-operand stalls, ID-stage branch resolution, misprediction flushing, a 64-entry BTB, and a 256-entry 2-bit PHT.
 
-The supported instruction subset is:
+The OoO core includes a 16-entry ROB, 8-entry issue queue, RAT-based register renaming, a single CDB, out-of-order load/ALU execution, and in-order commit. Its conservative ROB-scanning LSQ blocks loads behind unresolved older stores and forwards from the youngest matching store. Control-flow instructions use a dispatch barrier instead of speculative branch recovery.
 
-- R-type: `ADDU SUBU AND OR XOR NOR SLL SRL SRA SLT SLTU JR`
-- I-type: `LW SW ADDIU SLTI SLTIU LUI ANDI ORI XORI BEQ BNE`
-- J-type: `J JAL`
+Both cores use a configurable-latency request/response memory interface and a shared 1 KiB L1 D-cache:
 
-`CPU.v` contains the datapath, pipeline registers, and predictor state. Control decoding is in `CTRL.v`; `ALU.v`, `RF.v`, and `MEM.v` implement the execution, register, and memory blocks. Forwarding and stall decisions are isolated in `FORWARD.v` and `HAZARD.v`, with instruction constants in `GLOBAL.v`.
+- 32 sets × 2 ways × 16-byte lines
+- blocking, one outstanding miss
+- write-back and write-allocate
+- true LRU with per-way valid and dirty bits
+- four-word dirty-victim writeback before refill
+
+Instruction fetch still accesses the shared 32 KiB backing memory directly.
+
+Supported instructions are `ADDU`, `SUBU`, `AND`, `OR`, `XOR`, `NOR`, `SLL`, `SRL`, `SRA`, `SLT`, `SLTU`, `JR`, `LW`, `SW`, `ADDIU`, `SLTI`, `SLTIU`, `LUI`, `ANDI`, `ORI`, `XORI`, `BEQ`, `BNE`, `J`, and `JAL`.
 
 ## Verification
 
-### Icarus Verilog
+`CPU_tb.v` and `CORE_OOO_tb.v` compare the final register state, architectural memory state, and retire trace against independently generated references. Because dirty cache lines can remain at `halt`, the testbenches overlay valid dirty L1 lines on backing memory before checking memory contents. The OoO testbench also checks ROB accounting, duplicate writeback, and committed-store/request invariants.
 
-[`CPU_tb.v`](CPU_tb.v) is a self-checking testbench. It runs the processor until `halt`, then compares all 32 registers and all 8,192 memory words with reference dumps. The complete assembly programs and reference images are course material and are therefore not committed to this repository; representative excerpts from one randomized testcase are shown below instead.
+During development, 25 programs were run locally on both cores: 16 self-authored directed tests (pipeline hazards, control flow, ROB/RAT/IQ/CDB behavior, memory ordering, cache replacement), seven course tests, and two performance programs. All passed, with zero OoO invariant violations. These programs and their reference images are not included in this repository.
 
-The following run was performed with Icarus Verilog on course testcase 6:
+The preserved course-test baseline below uses one-cycle memory with the cache bypassed:
 
 ```console
-$ iverilog -o cpu_sim CPU.v CTRL.v ALU.v RF.v MEM.v FORWARD.v HAZARD.v CPU_tb.v
+$ iverilog -DMEM_LATENCY_TB=1 -DDCACHE_BYPASS_TB=1 -o cpu_sim CPU.v CTRL.v ALU.v RF.v MEM.v DCACHE.v FORWARD.v HAZARD.v CPU_tb.v
 $ cd testcase/testcase6
 $ vvp ../../cpu_sim
 cycles = 279
 PASS: architectural state matches reference
 ```
 
-**`cycles = 279`** is the measured runtime for this program with 48 branches, 56 jumps, 96 loads, and 32 stores, while forwarding, load-use stalls, and BTB/PHT prediction were all enabled. The testbench reached `halt` without a timeout and completed the full register/memory comparison without reporting a mismatch. The MARS cross-check below makes the relevant architectural results visible rather than relying only on the final `PASS` message.
+The default cached configuration uses 5-cycle memory. The OoO core is built separately from the in-order core:
 
-### MARS ISA cross-check
-
-The same program was also run in MARS as an ISA-level cross-check. Testcase 6 repeatedly stores four values, loads pairs back into `$t0` and `$t1`, and branches when it finds the equal pair. Each selected branch adds a path-specific immediate to `$t4`.
-
-The opening group stores the same value at offsets 0 and 8. Loading those locations makes the second comparison true and selects `eq_0_0_2`:
-
-```diff
-  li    $t0, 1141988164
-  sw    $t0, 0($gp)            # first candidate
-  li    $t0, -1333632164
-  sw    $t0, 4($gp)
-  li    $t0, 1141988164
-  sw    $t0, 8($gp)            # duplicate of offset 0
-
-+ lw    $t0, 0($gp)            # reload the first value
-+ lw    $t1, 8($gp)            # reload its duplicate
-+ beq   $t0, $t1, eq_0_0_2    # equal: select this branch
-
-  eq_0_0_2:
-+ addiu $t4, $t4, 26827        # accumulate the selected path
+```console
+$ iverilog -DMEM_LATENCY_TB=5 -DDCACHE_BYPASS_TB=0 -o cpu_sim CPU.v CTRL.v ALU.v RF.v MEM.v DCACHE.v FORWARD.v HAZARD.v CPU_tb.v
+$ iverilog -DMEM_LATENCY_TB=5 -DDCACHE_BYPASS_TB=0 -o ooo_sim core_ooo.v CTRL.v ALU.v MEM.v DCACHE.v CORE_OOO_tb.v
 ```
 
-The final group follows the same pattern. Its equal pair contains decimal `-674818380`, represented as `0xd7c716b4`, so both `$t0` and `$t1` retain that value. A failed search would set `$a0` to 5; the observed `$a0 = 0` shows that the error path was not entered. `$v0 = 5` marks arrival at the final instruction.
+## Current boundary
 
-```diff
-  random_7:
-  li    $t0, -674818380
-  sw    $t0, 0($gp)
-  li    $t0, -674818380
-  sw    $t0, 8($gp)
-
-+ lw    $t0, 0($gp)
-+ lw    $t1, 8($gp)
-+ beq   $t0, $t1, eq_7_0_2    # final equal pair
-
-  eq_7_0_2:
-+ addiu $t4, $t4, -366        # final contribution to $t4
-+ j     random_8              # bypass the error marker
-
-  error:
-+ li    $a0, 5                # written only if no pair matched
-  random_8:
-+ li    $v0, 5                # final instruction reached
-```
-
-Before execution, the general-purpose registers are zero. The visible `$gp` and `$sp` values are defaults supplied by MARS for its virtual address space, not results produced by the test program.
-
-MARS before execution:
-
-![Annotated MARS register state before execution](docs/mars_before_en_annotated.png)
-
-MARS after execution:
-
-![Annotated MARS register state after execution](docs/mars_after_en_annotated.png)
-
-After execution, `$a0 = 0` confirms that the error label was bypassed, while `$v0 = 5` shows that control reached the final instruction. `$t0` and `$t1` contain the expected final pair, and `$t4 = 0x3457` is the accumulated result of all selected branches. These program-produced values match the RTL reference dump. `$gp` and `$sp` still differ from the RTL environment because the two simulators use different initial memory layouts.
-
-## Current scope
-
-The CPU has been verified in simulation. It has not yet been synthesized for an FPGA or tested on hardware. The next development stages are documented in [`plan.md`](plan.md), beginning with retire-trace verification and a latency-aware memory interface before adding caches and an out-of-order core.
+The current memory hierarchy ends at the blocking L1 D-cache. A committed store buffer, merging write-back buffer, unified L2, multiple-outstanding memory transactions, MSHRs, I-cache, and multicore coherence are planned but not implemented. The OoO core remains single-issue and non-speculative across branches. Verification is simulation-based; FPGA synthesis and board testing have not been performed.

@@ -1,0 +1,7 @@
+/testcase/
+cpu_sim*
+ooo_sim*
+*.vvp
+*.swp
+retire_trace.log
+golden_trace.log

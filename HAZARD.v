@@ -14,18 +14,21 @@ module HAZARD(
     input           Branch,
 
 
-    output          stall
+    output          stall,
+    output          load_use,
+    output          hazard_ex,
+    output          hazard_mem
     );
 
-    wire load_use = id_ex_valid && id_ex_RegWrite && (id_ex_wr_addr != 0)
+    assign load_use = id_ex_valid && id_ex_RegWrite && (id_ex_wr_addr != 0)
                     && (id_ex_MemtoReg == 2'b01)
                     && (id_ex_wr_addr==if_id_rs || id_ex_wr_addr==if_id_rt);
 
-    wire hazard_ex = Branch && id_ex_valid && id_ex_RegWrite && (id_ex_wr_addr != 5'd0)
-                    && (id_ex_wr_addr == if_id_rs || id_ex_wr_addr == if_id_rt);    
+    assign hazard_ex = Branch && id_ex_valid && id_ex_RegWrite && (id_ex_wr_addr != 5'd0)
+                    && (id_ex_wr_addr == if_id_rs || id_ex_wr_addr == if_id_rt);
 
-    wire hazard_mem = Branch && ex_mem_valid && ex_mem_RegWrite && (ex_mem_wr_addr != 5'd0)
+    assign hazard_mem = Branch && ex_mem_valid && ex_mem_RegWrite && (ex_mem_wr_addr != 5'd0)
                     && (ex_mem_wr_addr == if_id_rs || ex_mem_wr_addr == if_id_rt);
-                    
+
     assign stall = load_use || hazard_ex || hazard_mem;
 endmodule
