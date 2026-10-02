@@ -31,7 +31,17 @@ Supported instructions are `ADDU`, `SUBU`, `AND`, `OR`, `XOR`, `NOR`, `SLL`, `SR
 
 `CPU_tb.v` and `CORE_OOO_tb.v` compare the final register state, architectural memory state, and retire trace against independently generated references. Because dirty cache lines can remain at `halt`, the testbenches overlay valid dirty L1 lines on backing memory before checking memory contents. The OoO testbench also checks ROB accounting, duplicate writeback, and committed-store/request invariants.
 
-During development, 25 programs were run locally on both cores: 16 self-authored directed tests (pipeline hazards, control flow, ROB/RAT/IQ/CDB behavior, memory ordering, cache replacement), seven course tests, and two performance programs. All passed, with zero OoO invariant violations. These programs and their reference images are not included in this repository.
+During development, 25 programs were run locally on both cores: 16 self-authored directed tests (pipeline hazards, control flow, ROB/RAT/IQ/CDB behavior, memory ordering, cache replacement), seven course tests, and two performance programs. All passed, with zero OoO invariant violations. The 16 selftests are included; course programs and machine-readable reference dumps are not.
+
+### MARS register-state cross-check
+
+The same course testcase was also executed in MARS to make its architectural result visible. Before execution, the general-purpose registers are zero; the displayed `$gp` and `$sp` values are MARS defaults.
+
+![MARS registers before execution](docs/mars_before_en_annotated.png)
+
+After execution, `$t0` and `$t1` contain the expected final equal pair, and `$t4 = 0x3457` contains the accumulated branch-path result. `$a0 = 0` shows that the error path was not taken, while `$v0 = 5` confirms that the final instruction was reached. These program-produced values match the RTL reference state.
+
+![MARS registers after execution](docs/mars_after_en_annotated.png)
 
 The preserved course-test baseline below uses one-cycle memory with the cache bypassed:
 

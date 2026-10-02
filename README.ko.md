@@ -31,7 +31,17 @@ Instruction fetch는 아직 공유 32 KiB backing memory에 직접 연결됩니�
 
 `CPU_tb.v`와 `CORE_OOO_tb.v`는 최종 register state, architectural memory state, retire trace를 독립적으로 생성한 reference와 비교합니다. `halt` 시점에 dirty cache line이 남을 수 있으므로 valid dirty L1 line을 backing memory 위에 overlay한 뒤 메모리를 검사합니다. OoO testbench는 ROB accounting, 중복 writeback, committed-store/request invariant도 확인합니다.
 
-개발 중 두 코어에서 로컬로 총 25개 프로그램을 실행했습니다. pipeline hazard, control flow, ROB/RAT/IQ/CDB, memory ordering, cache replacement를 다루는 자체 작성 directed test 16개, 수업 testcase 7개, 성능 프로그램 2개이며 모두 통과했고 OoO invariant violation은 0건입니다. 이 프로그램들과 reference image는 저장소에 포함하지 않습니다.
+개발 중 두 코어에서 로컬로 총 25개 프로그램을 실행했습니다. pipeline hazard, control flow, ROB/RAT/IQ/CDB, memory ordering, cache replacement를 다루는 자체 작성 directed test 16개, 수업 testcase 7개, 성능 프로그램 2개이며 모두 통과했고 OoO invariant violation은 0건입니다. 자체 test 16개는 저장소에 포함하며, 수업 프로그램과 machine-readable reference dump는 포함하지 않습니다.
+
+### MARS 레지스터 상태 교차 검증
+
+Architectural result를 직접 확인하기 위해 같은 수업 testcase를 MARS에서도 실행했습니다. 실행 전 일반 목적 레지스터는 0이며, 화면의 `$gp`와 `$sp`는 MARS가 제공하는 기본값입니다.
+
+![MARS 실행 전 레지스터 상태](docs/mars_before_ko_annotated.png)
+
+실행 후 `$t0`와 `$t1`에는 예상한 마지막 동일 값이 남고, `$t4 = 0x3457`에는 선택된 branch path의 누적 결과가 저장됩니다. `$a0 = 0`은 error path를 실행하지 않았음을, `$v0 = 5`는 마지막 명령어에 도달했음을 나타냅니다. 이 값들은 RTL reference state와 일치합니다.
+
+![MARS 실행 후 레지스터 상태](docs/mars_after_ko_annotated.png)
 
 아래는 1-cycle memory와 cache bypass를 사용한 수업 testcase baseline 기록입니다.
 
